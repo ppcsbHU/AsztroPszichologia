@@ -288,12 +288,12 @@
         let prompt = '';
         
         const analysisTypes = {
-          chart: 'Készíts részletes születési chart elemzést magyarul.',
-          houses: 'Készíts házrendszer elemzést magyarul.',
-          aspects: 'Készíts aspektus elemzést magyarul.',
-          transits: 'Készíts mai tranzit elemzést magyarul.',
-          personality: 'Készíts személyiség mélyelemzést magyarul.',
-          full: 'Készíts teljes asztrológiai és pszichológiai jelentést magyarul.'
+          chart: 'Készíts részletes születési chart elemzést magyarul. Strukturáltan, bekezdésekre bontva.',
+          houses: 'Készíts házrendszer elemzést magyarul. Strukturáltan, bekezdésekre bontva.',
+          aspects: 'Készíts aspektus elemzést magyarul. Strukturáltan, bekezdésekre bontva.',
+          transits: 'Készíts mai tranzit elemzést magyarul. Strukturáltan, bekezdésekre bontva.',
+          personality: 'Készíts személyiség mélyelemzést magyarul. Strukturáltan, bekezdésekre bontva.',
+          full: 'Készíts teljes asztrológiai és pszichológiai jelentést magyarul. Strukturáltan, bekezdésekre bontva.'
         };
 
         prompt = `${analysisTypes[state.selectedAnalysis]}
@@ -303,8 +303,12 @@ ${state.selectedAnalysis === 'transits' ? `Mai dátum: ${new Date().toLocaleDate
 
 Adj részletes pszichológiai elemzést és praktikus tanácsokat.
 
-VÁLASZOLJ CSAK JSON-BEN:
-{"analysis": "részletes elemzés szövege..."}`;
+FONTOS: Válaszolj CSAK tiszta JSON formátumban, SEMMI más szöveg ne legyen (sem előtte, sem utána)!
+NE használj újsor karaktereket (\\n) a szövegben, helyette használj <br> tag-eket!
+NE használj idézőjeleket (") a szövegben, csak aposztrófokat (')!
+
+Formátum:
+{"analysis": "Az elemzés szövege itt... <br><br>Második bekezdés..."}`;
 
         const response = await fetch(WORKER_URL, {
           method: 'POST',
@@ -312,15 +316,47 @@ VÁLASZOLJ CSAK JSON-BEN:
           body: JSON.stringify({ prompt: prompt })
         });
 
-        if (!response.ok) throw new Error('API hiba');
+        if (!response.ok) {
+          if (response.status === 429) {
+            throw new Error('Túl sok kérés. Várj 1 percet és próbáld újra!');
+          }
+          throw new Error(`API hiba: ${response.status}`);
+        }
 
         const data = await response.json();
-        let cleanText = data.text.replace(/```json|```/g, '').trim();
         
-        const firstBrace = cleanText.indexOf('{');
-        if (firstBrace > 0) cleanText = cleanText.substring(firstBrace);
+        // Agresszív tisztítás
+        let cleanText = data.text || '';
         
-        const parsed = JSON.parse(cleanText);
+        // Távolítsuk el az összes markdown backtick-et
+        cleanText = cleanText.replace(/```json/g, '').replace(/```/g, '');
+        
+        // Távolítsuk el a bevezető szöveget
+        cleanText = cleanText.replace(/^.*?(\{)/s, '$1');
+        
+        // Távolítsuk el a záró szövegeket
+        cleanText = cleanText.replace(/(\}).*$/s, '$1');
+        
+        // Escape-elt újsorok cseréje
+        cleanText = cleanText.replace(/\\n/g, ' ');
+        
+        // Kontrolkaraktek eltávolítása
+        cleanText = cleanText.replace(/[\x00-\x1F\x7F]/g, '');
+        
+        // Trim
+        cleanText = cleanText.trim();
+        
+        console.log('Tisztított JSON:', cleanText);
+        
+        let parsed;
+        try {
+          parsed = JSON.parse(cleanText);
+        } catch (parseError) {
+          console.error('JSON parse hiba:', parseError);
+          console.error('Problémás JSON:', cleanText);
+          throw new Error('A válasz nem megfelelő formátumú. Próbáld újra!');
+        }
+        
         updateState({ analysisResult: parsed.analysis, loading: false });
       } catch (err) {
         updateState({ error: 'Hiba az elemzés során: ' + err.message, loading: false });
@@ -480,7 +516,22 @@ VÁLASZOLJ CSAK JSON-BEN:
             </button>
           </form>
 
-          ${state.error ? `<div class="mt-6 bg-red-900/40 border border-red-600/50 rounded-lg p-4 text-red-200">⚠️ ${state.error}</div>` : ''}
+          ${state.error ? `
+        <div class="mt-6 bg-red-900/40 border border-red-600/50 rounded-lg p-4">
+          <div class="flex items-start gap-3">
+            <div class="text-2xl">⚠️</div>
+            <div>
+              <p class="text-red-200 font-semibold mb-1">Hiba történt:</p>
+              <p class="text-red-300 text-sm">${state.error}</p>
+              ${state.error.includes('Túl sok kérés') ? `
+                <p class="text-red-200 text-sm mt-2">
+                  💡 Várj 1-2 percet mielőtt újra próbálod. A Gemini API ingyenes tier-je limitált kérésszámmal rendelkezik.
+                </p>
+              ` : ''}
+            </div>
+          </div>
+        </div>
+      ` : ''}
         </div>
       `;
     }
@@ -576,11 +627,38 @@ VÁLASZOLJ CSAK JSON-BEN:
     }
 
     function renderAnalysisResult() {
+      // Feldolgozzuk az eredményt - <br> tageket bekezdésekre bontjuk
+      const paragraphs = state.analysisResult.split('<br><br>').filter(p => p.trim());
+      
       return `
         <div class="bg-gradient-to-br from-slate-900/70 to-blue-950/60 backdrop-blur-2xl rounded-2xl p-8 border-2 bronze-glow" style="border-color: rgba(205, 127, 50, 0.6);">
-          <h2 class="text-2xl font-semibold text-amber-200 mb-4 font-serif">Részletes Elemzésed</h2>
-          <div class="prose prose-invert max-w-none">
-            <div class="text-amber-100/90 leading-relaxed whitespace-pre-wrap">${state.analysisResult}</div>
+          <div class="flex items-center justify-between mb-6">
+            <h2 class="text-3xl font-semibold text-amber-200 font-serif">✨ Részletes Elemzésed</h2>
+            <button onclick="location.reload()" class="px-4 py-2 bg-slate-800/60 hover:bg-slate-700/60 border rounded-lg text-amber-300 text-sm transition-all" style="border-color: rgba(205, 127, 50, 0.4);">
+              🔄 Új elemzés
+            </button>
+          </div>
+          
+          <div class="space-y-6">
+            ${paragraphs.map((para, index) => `
+              <div class="bg-slate-900/40 border rounded-xl p-6 hover:bg-slate-900/50 transition-all" style="border-color: rgba(205, 127, 50, 0.3);">
+                <div class="flex items-start gap-4">
+                  <div class="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-amber-600 to-yellow-700 flex items-center justify-center text-slate-900 font-bold text-sm">
+                    ${index + 1}
+                  </div>
+                  <div class="flex-1">
+                    <p class="text-amber-100/90 leading-relaxed text-lg">${para.replace(/<br>/g, '<br><br>')}</p>
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+          
+          <div class="mt-8 bg-indigo-900/30 border rounded-lg p-4" style="border-color: rgba(205, 127, 50, 0.3);">
+            <p class="text-amber-300/80 text-sm text-center">
+              💡 Ez az elemzés AI-alapú asztrológiai és pszichológiai értelmezés. 
+              Használd útmutatásként, de mindig hallgass a saját intuíciódra is!
+            </p>
           </div>
         </div>
       `;
