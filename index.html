@@ -230,8 +230,8 @@
         
         const observer = new Astronomy.Observer(lat, lon, 0);
         
-        const sun = Astronomy.SunPosition(date);
-        const moon = Astronomy.MoonPosition(date);
+        const sun = Astronomy.Equator('Sun', date, observer, true, true);
+        const moon = Astronomy.Equator('Moon', date, observer, true, true);
         
         return {
           date: date,
